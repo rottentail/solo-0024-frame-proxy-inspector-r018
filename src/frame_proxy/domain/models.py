@@ -135,6 +135,64 @@ class SceneRecord:
 
 
 @dataclass(slots=True)
+class BoundaryEvidence:
+    index: int
+    coarse_frame: int
+    previous_sample: int
+    scene_start_frame: int
+    localized_frame: int | None
+    certain: bool
+    status: str
+    reason: str
+    scanned_frames: int
+    significant_steps: int
+    step_threshold: float
+    window_distance: float
+    max_step_frame: int
+    max_step_distance: float
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "index": self.index,
+            "coarse_frame": self.coarse_frame,
+            "previous_sample": self.previous_sample,
+            "scene_start_frame": self.scene_start_frame,
+            "localized_frame": self.localized_frame,
+            "certain": self.certain,
+            "status": self.status,
+            "reason": self.reason,
+            "scanned_frames": self.scanned_frames,
+            "significant_steps": self.significant_steps,
+            "step_threshold": round(self.step_threshold, 4),
+            "window_distance": round(self.window_distance, 4),
+            "max_step_frame": self.max_step_frame,
+            "max_step_distance": round(self.max_step_distance, 4),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "BoundaryEvidence":
+        localized = data.get("localized_frame")
+        return cls(
+            index=int(data["index"]),
+            coarse_frame=int(data["coarse_frame"]),
+            previous_sample=int(data["previous_sample"]),
+            scene_start_frame=int(
+                data.get("scene_start_frame", data.get("boundary_frame", 0))
+            ),
+            localized_frame=None if localized is None else int(localized),
+            certain=bool(data.get("certain", data.get("status") == "localized")),
+            status=str(data["status"]),
+            reason=str(data["reason"]),
+            scanned_frames=int(data["scanned_frames"]),
+            significant_steps=int(data["significant_steps"]),
+            step_threshold=float(data["step_threshold"]),
+            window_distance=float(data.get("window_distance", 0.0)),
+            max_step_frame=int(data["max_step_frame"]),
+            max_step_distance=float(data["max_step_distance"]),
+        )
+
+
+@dataclass(slots=True)
 class InspectionRecord:
     inspection_id: str
     clip_id: str
@@ -142,8 +200,11 @@ class InspectionRecord:
     sensitivity: float
     sample_stride: int
     min_scene_frames: int
+    boundary_mode: str = "sampled"
     sampled_frames: list[int] = field(default_factory=list)
     cut_frames: list[int] = field(default_factory=list)
+    coarse_cut_frames: list[int] = field(default_factory=list)
+    boundaries: list[BoundaryEvidence] = field(default_factory=list)
     scenes: list[SceneRecord] = field(default_factory=list)
     transitions: list[Transition] = field(default_factory=list)
     error_code: str | None = None
@@ -166,6 +227,37 @@ class InspectionRecord:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
+        if self.boundary_mode == "precise":
+            certain_count = sum(1 for item in self.boundaries if item.certain)
+            value["boundary_mode"] = "precise"
+            value["coarse_cut_frames"] = list(self.coarse_cut_frames)
+            value["boundaries"] = [item.as_dict() for item in self.boundaries]
+            value["certain_cut_frames"] = [
+                item.localized_frame
+                for item in self.boundaries
+                if item.certain
+            ]
+            value["provisional_cut_frames"] = [
+                item.scene_start_frame
+                for item in self.boundaries
+                if not item.certain
+            ]
+            value["discovery"] = {
+                "basis": "coarse_sample",
+                "scope": "changes_between_adjacent_sampled_frames",
+                "complete": False,
+                "unobserved_changes_possible": True,
+                "sample_stride": self.sample_stride,
+                "sampled_frame_count": len(self.sampled_frames),
+                "certain_boundaries": certain_count,
+                "uncertain_boundaries": len(self.boundaries) - certain_count,
+                "boundary_selection": (
+                    "Only a single frame-to-frame switch is treated as an "
+                    "exact boundary. A continuous change keeps its coarse "
+                    "candidate as a provisional scene start and is reported "
+                    "as lacking localization evidence."
+                ),
+            }
         if self.error_code is not None:
             value["error_code"] = self.error_code
         if self.error_message is not None:
@@ -191,8 +283,17 @@ class InspectionRecord:
             sensitivity=float(data["sensitivity"]),
             sample_stride=int(data["sample_stride"]),
             min_scene_frames=int(data["min_scene_frames"]),
+            boundary_mode=str(data.get("boundary_mode", "sampled")),
             sampled_frames=[int(value) for value in data.get("sampled_frames", [])],
             cut_frames=[int(value) for value in data.get("cut_frames", [])],
+            coarse_cut_frames=[
+                int(value) for value in data.get("coarse_cut_frames", [])
+            ],
+            boundaries=[
+                BoundaryEvidence.from_dict(item)
+                for item in data.get("boundaries", [])
+                if isinstance(item, dict)
+            ],
             scenes=[
                 SceneRecord.from_dict(item)
                 for item in data.get("scenes", [])

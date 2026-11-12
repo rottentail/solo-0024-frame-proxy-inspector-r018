@@ -83,6 +83,27 @@
       ]
     },
     {
+      "id": "localize-shot-boundaries",
+      "name": "Localize shot boundaries to source frames",
+      "entry": "POST /v1/clips/{clip_id}/inspections",
+      "steps": [
+        "keep the coarse sampled cut judgment",
+        "fingerprint the unobserved frames between adjacent samples of each change",
+        "resolve each window to one switch frame or report insufficient evidence",
+        "persist localized scene ranges and representative frames"
+      ],
+      "success": "reports the same discovered changes with exact source-frame boundaries that scene coverage and all contact-sheet selections share",
+      "failure": "reports a continuous change as insufficient evidence instead of claiming an arbitrary frame, and never claims complete discovery from coarse sampling",
+      "verification": "the precise boundary smoke path compares sampled and localized cuts, checks all three contact-sheet selections, and confirms an unlocalized continuous change",
+      "module_ids": [
+        "http",
+        "domain",
+        "media",
+        "service",
+        "storage"
+      ]
+    },
+    {
       "id": "create-contact-sheet",
       "name": "Create contact sheet",
       "entry": "POST /v1/inspections/{inspection_id}/contact-sheets",

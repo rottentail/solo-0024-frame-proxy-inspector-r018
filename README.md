@@ -9,8 +9,10 @@ footage into two review artifacts:
 The service verifies the RIFF/AVI container, frame geometry, and frame chunk
 count before it admits a clip. Shot indexing then computes luma and color
 fingerprints from sampled frames and applies a minimum-scene guard to hard
-cuts. Contact sheet requests are checked against a fixed pixel budget before
-frame decoding starts.
+cuts. An optional precise mode re-reads the frames between each discovered
+change to name the exact source frame where the picture switches, and reports
+when a gradual change has no single switch to name. Contact sheet requests are
+checked against a fixed pixel budget before frame decoding starts.
 
 Automated unit, integration, and browser tests are intentionally deferred to a
 later task stage. This baseline ships executable workflow checks instead.
@@ -70,6 +72,34 @@ Example inspection request:
 }
 ```
 
+`boundary_mode` defaults to `sampled`, which reports a change at the first
+sampled frame where the coarse comparison crosses the threshold. Setting it to
+`precise` keeps that sampled judgment and also resolves each discovered change
+to the exact source frame where the picture switches inside the sample window:
+
+```json
+{
+  "inspection_id": "inspection-demo-b",
+  "sensitivity": 0.55,
+  "sample_stride": 2,
+  "min_scene_frames": 2,
+  "boundary_mode": "precise"
+}
+```
+
+A precise inspection response adds `coarse_cut_frames`, `boundaries`,
+`certain_cut_frames`, `provisional_cut_frames`, and `discovery` beside the
+usual `cut_frames` and `scenes`. `cut_frames` and `scenes` are the localized
+boundaries that every contact-sheet selection uses. A boundary whose window
+holds a continuous change instead of one switch is reported as
+`insufficient_evidence` with `localized_frame: null`; its coarse candidate
+remains a provisional scene start. `discovery.complete` is always `false`
+because discovery still rests on the coarse sample, so changes hidden between
+sampled positions may exist.
+
+Inspections stored before this mode existed keep their original shape and
+still read correctly.
+
 Example contact sheet request:
 
 ```json
@@ -83,8 +113,10 @@ Example contact sheet request:
 }
 ```
 
-`selection` may be `stored`, `midpoint`, or `first`. The rendered PPM is
-binary P6 with a maximum value of 255.
+`selection` may be `stored`, `midpoint`, or `first`. All three read the one
+stored set of scene ranges, so a precise inspection composes every selection
+from its localized boundaries. The rendered PPM is binary P6 with a maximum
+value of 255.
 
 ## Data layout
 
@@ -121,7 +153,8 @@ tools/
 ├── harness.py
 ├── check_clip_intake.py
 ├── check_shot_index.py
-└── check_contact_sheet.py
+├── check_contact_sheet.py
+└── check_precise_boundaries.py
 ```
 
 ## Build and workflow checks
@@ -138,6 +171,7 @@ Run one workflow check at a time:
 PYTHONPATH=src:. python3 tools/check_clip_intake.py
 PYTHONPATH=src:. python3 tools/check_shot_index.py
 PYTHONPATH=src:. python3 tools/check_contact_sheet.py
+PYTHONPATH=src:. python3 tools/check_precise_boundaries.py
 ```
 
 Each check starts a real loopback HTTP server, generates media through the

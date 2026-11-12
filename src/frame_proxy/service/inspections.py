@@ -16,9 +16,13 @@ from frame_proxy.domain.policies import (
 )
 from frame_proxy.domain.transitions import transition_inspection
 from frame_proxy.media.avi import probe_avi
-from frame_proxy.media.detector import analyze_frames
-from frame_proxy.media.fingerprint import fingerprint_frame
-from frame_proxy.media.frames import decode_frame_at
+from frame_proxy.media.detector import (
+    PRECISE_MODE,
+    analyze_frames,
+    detect_coarse_cuts,
+)
+from frame_proxy.media.fingerprint import FrameFingerprint
+from frame_proxy.media.gaps import collect_fingerprints, gap_frame_indices
 from frame_proxy.storage.repository import FileRepository
 
 
@@ -47,6 +51,7 @@ class InspectionService:
             sensitivity=request.sensitivity,
             sample_stride=request.sample_stride,
             min_scene_frames=request.min_scene_frames,
+            boundary_mode=request.boundary_mode,
         )
         self._repository.create_inspection(record)
 
@@ -63,20 +68,36 @@ class InspectionService:
             sampled_frames = tuple(
                 range(0, descriptor.frame_count, request.sample_stride)
             )
-            fingerprints = tuple(
-                fingerprint_frame(decode_frame_at(media, descriptor, frame_index))
-                for frame_index in sampled_frames
-            )
+            fingerprints = collect_fingerprints(media, descriptor, sampled_frames)
+            frame_fingerprints: dict[int, FrameFingerprint] | None = None
+            if request.boundary_mode == PRECISE_MODE:
+                coarse_pairs = detect_coarse_cuts(
+                    descriptor.frame_count,
+                    sampled_frames,
+                    fingerprints,
+                    request.sensitivity,
+                    request.min_scene_frames,
+                )
+                gap_frames = gap_frame_indices(sampled_frames, coarse_pairs)
+                gap_values = collect_fingerprints(media, descriptor, gap_frames)
+                frame_fingerprints = dict(zip(sampled_frames, fingerprints))
+                frame_fingerprints.update(zip(gap_frames, gap_values))
             result = analyze_frames(
                 descriptor.frame_count,
                 sampled_frames,
                 fingerprints,
                 sensitivity=request.sensitivity,
                 min_scene_frames=request.min_scene_frames,
+                boundary_mode=request.boundary_mode,
+                frame_fingerprints=frame_fingerprints,
             )
+            record.boundary_mode = result.boundary_mode
             record.sampled_frames = list(result.sampled_frames)
             record.cut_frames = list(result.cut_frames)
             record.scenes = list(result.scenes)
+            if result.boundary_mode == PRECISE_MODE:
+                record.coarse_cut_frames = list(result.coarse_cut_frames)
+                record.boundaries = list(result.boundaries)
             transition_inspection(record, "indexed", reason="scene ranges verified")
             self._repository.update_inspection(record)
             return record

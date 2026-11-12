@@ -50,20 +50,22 @@ def _frame_bytes(
     return bytes(rows)
 
 
-def build_sample_avi(
+def build_avi_from_colors(
+    colors: Iterable[tuple[int, int, int]],
     *,
     width: int = 128,
     height: int = 72,
     fps: int = 12,
-    scene_lengths: tuple[int, ...] = DEFAULT_SCENES,
 ) -> bytes:
+    """Write one uncompressed 24-bit frame per requested color."""
     if width <= 0 or height <= 0 or fps <= 0:
         raise ValueError("sample geometry and frame rate must be positive")
-    if not scene_lengths or any(length <= 0 for length in scene_lengths):
-        raise ValueError("scene lengths must be positive")
+    palette = list(colors)
+    if not palette:
+        raise ValueError("at least one frame color is required")
     row_stride = ((width * 3 + 3) // 4) * 4
     frame_size = row_stride * height
-    frame_count = sum(scene_lengths)
+    frame_count = len(palette)
 
     avih = struct.pack(
         "<14I",
@@ -131,22 +133,66 @@ def build_sample_avi(
         ),
     )
 
-    media_chunks: list[bytes] = []
-    frame_number = 0
-    for scene_index, length in enumerate(scene_lengths):
-        color = SCENE_COLORS[scene_index % len(SCENE_COLORS)]
-        for _ in range(length):
-            payload = _frame_bytes(
-                width,
-                height,
-                row_stride,
-                color,
-                frame_number,
-            )
-            media_chunks.append(_chunk(b"00db", payload))
-            frame_number += 1
+    media_chunks = [
+        _chunk(
+            b"00db",
+            _frame_bytes(width, height, row_stride, color, frame_number),
+        )
+        for frame_number, color in enumerate(palette)
+    ]
     media_list = _list_chunk(b"movi", media_chunks)
 
     body = b"AVI " + header_list + media_list
     return b"RIFF" + struct.pack("<I", len(body)) + body
+
+
+def build_crossfade_avi(
+    *,
+    before: tuple[int, int, int] = SCENE_COLORS[0],
+    after: tuple[int, int, int] = SCENE_COLORS[1],
+    hold_before: int = 8,
+    blend_frames: int = 6,
+    hold_after: int = 8,
+    width: int = 128,
+    height: int = 72,
+    fps: int = 12,
+) -> bytes:
+    """Write footage whose change is gradual rather than a single cut."""
+    if hold_before <= 0 or hold_after <= 0 or blend_frames <= 0:
+        raise ValueError("crossfade lengths must be positive")
+    colors: list[tuple[int, int, int]] = [before] * hold_before
+    for step in range(1, blend_frames + 1):
+        ratio = step / (blend_frames + 1)
+        colors.append(
+            tuple(
+                round(before[channel] * (1.0 - ratio) + after[channel] * ratio)
+                for channel in range(3)
+            )
+        )
+    colors.extend([after] * hold_after)
+    return build_avi_from_colors(colors, width=width, height=height, fps=fps)
+
+
+def build_sample_avi(
+    *,
+    width: int = 128,
+    height: int = 72,
+    fps: int = 12,
+    scene_lengths: tuple[int, ...] = DEFAULT_SCENES,
+) -> bytes:
+    if width <= 0 or height <= 0 or fps <= 0:
+        raise ValueError("sample geometry and frame rate must be positive")
+    if not scene_lengths or any(length <= 0 for length in scene_lengths):
+        raise ValueError("scene lengths must be positive")
+
+    colors: list[tuple[int, int, int]] = []
+    for scene_index, length in enumerate(scene_lengths):
+        color = SCENE_COLORS[scene_index % len(SCENE_COLORS)]
+        colors.extend([color] * length)
+    return build_avi_from_colors(
+        colors,
+        width=width,
+        height=height,
+        fps=fps,
+    )
 

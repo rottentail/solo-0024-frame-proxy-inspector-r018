@@ -57,6 +57,26 @@ An inspection belongs to one registered clip and stores the sensitivity,
 minimum scene length, sampled frame fingerprints, cut frame numbers, scene
 ranges, and representative frames.
 
+An inspection is indexed in one of two boundary modes:
+
+- `sampled` (default, also the shape of every inspection stored before this
+  mode existed): a change is reported at the sampled frame where the coarse
+  comparison first exceeds the threshold. The response shape is unchanged.
+- `precise`: the coarse sampled judgment is kept exactly as justification, and
+  each discovered change is additionally resolved to a single source frame
+  inside the window between its two adjacent sample positions. Scene ranges,
+  representative frames, and all three contact-sheet selections use that one
+  localized set of boundaries. When a window contains a continuous change or
+  several distinct steps instead of one switch, no exact frame is claimed;
+  the boundary is reported as `insufficient_evidence`, keeps the coarse
+  candidate as a provisional scene start, and is listed separately from
+  certain cuts.
+
+Discovery in both modes rests on the coarse sample. A precise inspection
+therefore reports `discovery.complete = false` and
+`unobserved_changes_possible = true`: changes hidden between sampled positions
+were never observed and are not claimed to have been found.
+
 Invariants:
 
 - Every scene range is half-open and remains inside the clip frame count.
@@ -65,6 +85,9 @@ Invariants:
 - The final scene ends exactly at the clip frame count.
 - A failed inspection keeps a stable error code and never exposes partial
   scene data as successful output.
+- A precise boundary either names one localized switch frame or reports
+  insufficient evidence; it never guesses a frame inside a continuous change.
+- Localized boundaries satisfy the same minimum scene guard as sampled cuts.
 
 State machine:
 
@@ -133,15 +156,18 @@ Entry point: `POST /v1/clips/{clip_id}/inspections`.
 
 Steps:
 
-1. The HTTP boundary validates `inspection_id`, sensitivity, sample stride, and
-   minimum scene length.
+1. The HTTP boundary validates `inspection_id`, sensitivity, sample stride,
+   minimum scene length, and the optional `boundary_mode`.
 2. The service loads the registered clip and creates a `pending` inspection.
 3. The state gate moves the record to `scanning`.
 4. The frame pipeline decodes sampled frames and computes luma/color
    fingerprints.
 5. The detector selects hard cuts whose distance exceeds the sensitivity
    threshold while honoring the minimum scene length.
-6. Scene ranges and representative frames are persisted and the inspection
+6. In `precise` mode, the detector also fingerprints every still-unobserved
+   frame between the adjacent samples of each discovered change, then resolves
+   each window to one switch frame or reports insufficient evidence.
+7. Scene ranges and representative frames are persisted and the inspection
    moves to `indexed`.
 
 Any decode, range, or persistence error moves the record to `failed` with a
@@ -159,7 +185,8 @@ Steps:
    identifier.
 3. The job enters `planned`, then `compositing`.
 4. The media layer decodes only the selected representative frames and resizes
-   them into a fixed grid.
+   them into a fixed grid. Every selection policy uses the inspection's stored
+   scene ranges, which are already localized in `precise` mode.
 5. PPM bytes and a tile map are written through temporary files.
 6. The service verifies dimensions and digest, commits the record, and moves
    the job to `ready`.
@@ -190,6 +217,13 @@ start the real HTTP application on a loopback port, create media through the
 production AVI writer, and exercise success plus a representative failure.
 They also verify persisted state and output digests. The build command only
 compiles the Python source and does not require network access.
+
+The `localize-shot-boundaries` check covers the precise boundary mode: it
+compares the unchanged sampled cuts with the localized cuts, verifies that
+scene ranges and all three contact-sheet selections use the localized
+boundaries, confirms that a continuous change reports insufficient evidence
+without inventing a frame, and checks that discovery is never declared
+complete.
 
 Automated tests are deferred to the later task boundary. This baseline keeps
 the smoke paths deterministic and local so future tests can replace or extend

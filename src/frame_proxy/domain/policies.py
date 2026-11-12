@@ -18,6 +18,7 @@ class InspectionRequest:
     sensitivity: float
     sample_stride: int
     min_scene_frames: int
+    boundary_mode: str = "sampled"
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,11 +95,18 @@ def validate_inspection_request(body: Any) -> InspectionRequest:
         str(value.get("inspection_id", "")),
         "inspection_id",
     )
+    boundary_mode = str(value.get("boundary_mode", "sampled"))
+    if boundary_mode not in {"sampled", "precise"}:
+        raise ValidationError(
+            "boundary_mode must be sampled or precise",
+            details={"field": "boundary_mode"},
+        )
     return InspectionRequest(
         inspection_id=inspection_id,
         sensitivity=_number(value, "sensitivity", 0.55, 0.05, 0.95),
         sample_stride=_integer(value, "sample_stride", 1, 1, 4),
         min_scene_frames=_integer(value, "min_scene_frames", 2, 1, 300),
+        boundary_mode=boundary_mode,
     )
 
 

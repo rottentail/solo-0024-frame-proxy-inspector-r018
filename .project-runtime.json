@@ -17,6 +17,10 @@
       "command": "PYTHONPATH=src:. python3 tools/check_shot_index.py"
     },
     {
+      "workflow_id": "localize-shot-boundaries",
+      "command": "PYTHONPATH=src:. python3 tools/check_precise_boundaries.py"
+    },
+    {
       "workflow_id": "create-contact-sheet",
       "command": "PYTHONPATH=src:. python3 tools/check_contact_sheet.py"
     }

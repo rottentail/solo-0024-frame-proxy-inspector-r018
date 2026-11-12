@@ -9,6 +9,7 @@ from frame_proxy.domain.errors import (
     ValidationError,
 )
 from frame_proxy.domain.models import (
+    BoundaryEvidence,
     ClipRecord,
     ContactSheetRecord,
     InspectionRecord,
@@ -24,6 +25,7 @@ from frame_proxy.domain.policies import (
 
 __all__ = [
     "ApplicationError",
+    "BoundaryEvidence",
     "ClipRecord",
     "ConflictError",
     "ContactSheetRecord",
